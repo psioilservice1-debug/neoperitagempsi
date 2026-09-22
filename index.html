@@ -499,6 +499,15 @@
     font-weight:700;
     cursor:pointer;
   }
+  .auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--paper-2);padding:4px;border-radius:10px;margin-bottom:18px;}
+  .auth-tab{border:0;background:transparent;color:var(--ink-soft);border-radius:7px;padding:9px 8px;font-weight:700;font-size:13px;cursor:pointer;}
+  .auth-tab.active{background:var(--paper);color:var(--steel);box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  .auth-panel{display:none;}
+  .auth-panel.active{display:block;}
+  .auth-panel h2{font-family:var(--font-display);font-size:17px;margin:0 0 5px;}
+  .auth-panel p{margin:0 0 16px;}
+  .auth-submit{width:100%;border:0;border-radius:9px;padding:11px 10px;background:var(--steel);color:#fff;font-weight:700;cursor:pointer;margin-top:3px;}
+  .auth-secondary{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--paper-2);color:var(--ink);font-weight:700;cursor:pointer;margin-top:9px;}
   .login-msg{
     min-height:20px;
     margin-top:12px;
@@ -573,7 +582,7 @@ window.addEventListener('unhandledrejection', function(e){
 <!--
 CONFIGURAÇÃO:
 1. Execute supabase_fichas_setup.sql no SQL Editor.
-2. TROQUE 'TROQUE-ESTA-SENHA-UNIVERSAL' no SQL pela senha especial de cadastro.
+2. No Supabase, desative a confirmação de e-mail em Authentication > Providers > Email.
 3. Preencha SUPABASE_URL e SUPABASE_KEY neste arquivo.
 4. O primeiro usuário criado começa automaticamente como PERITAGEM.
 5. Para transformar um usuário em ADMIN/CONSULTA, altere a tabela profiles no Supabase.
@@ -598,28 +607,46 @@ CONFIGURAÇÃO:
 <div class="login-overlay" id="loginOverlay">
   <div class="login-card">
     <h1>Acesso à Ficha de Peritagem</h1>
-    <p>Entre com seu e-mail e senha. As fichas ficarão vinculadas à sua conta na nuvem.</p>
+    <p>Entre na sua conta ou crie uma nova conta para acessar suas fichas na nuvem.</p>
 
-    <div class="login-field">
-      <label>E-mail</label>
-      <input type="email" id="loginEmail" autocomplete="email" placeholder="seuemail@empresa.com">
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" type="button">Login</button>
+      <button class="auth-tab" id="tabSignup" type="button">Criar conta</button>
     </div>
 
-    <div class="login-field">
-      <label>Senha</label>
-      <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Mínimo de 6 caracteres">
-    <div class="login-field">
-      <label>Senha especial de cadastro</label>
-      <input type="password" id="signupAccessCode" autocomplete="off" placeholder="Necessária para criar conta">
-    </div>
+    <div class="auth-panel active" id="loginPanel">
+      <h2>Entrar</h2>
+      <p>Use seu e-mail e sua senha da conta.</p>
+      <div class="login-field">
+        <label>E-mail</label>
+        <input type="email" id="loginEmail" autocomplete="email" placeholder="seuemail@empresa.com">
+      </div>
+      <div class="login-field">
+        <label>Senha</label>
+        <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Sua senha">
+      </div>
+      <button class="auth-submit" id="loginBtn" type="button">Entrar</button>
+      <button class="auth-secondary" id="forgotBtn" type="button">Esqueci minha senha</button>
     </div>
 
-    <div class="login-actions">
-      <button id="loginBtn">Entrar</button>
-      <button id="signupBtn">Criar conta</button>
+    <div class="auth-panel" id="signupPanel">
+      <h2>Criar conta</h2>
+      <p>Cadastre seu nome, e-mail e uma senha. Não é necessária senha universal.</p>
+      <div class="login-field">
+        <label>Nome</label>
+        <input type="text" id="signupName" autocomplete="name" placeholder="Seu nome">
+      </div>
+      <div class="login-field">
+        <label>E-mail</label>
+        <input type="email" id="signupEmail" autocomplete="email" placeholder="seuemail@empresa.com">
+      </div>
+      <div class="login-field">
+        <label>Senha</label>
+        <input type="password" id="signupPassword" autocomplete="new-password" placeholder="Mínimo de 6 caracteres">
+      </div>
+      <button class="auth-submit" id="signupBtn" type="button">Criar conta</button>
     </div>
 
-    <button class="login-link" id="forgotBtn">Esqueci minha senha</button>
     <div class="login-msg" id="loginMsg"></div>
   </div>
 </div>
@@ -1067,12 +1094,6 @@ CONFIGURAÇÃO:
     }
   }
 
-  async function validateUniversalSignupCode(code){
-    if(!db) return false;
-    var result = await db.rpc("validar_senha_cadastro", {p_senha:code});
-    if(result.error) throw result.error;
-    return result.data === true;
-  }
 
   async function loadPnList(){
     if(!db || !currentUser) return [];
@@ -1289,62 +1310,53 @@ CONFIGURAÇÃO:
     document.getElementById("loginMsg").textContent = "";
   }
 
+  function setAuthMode(mode){
+    var login = mode === "login";
+    document.getElementById("loginPanel").classList.toggle("active", login);
+    document.getElementById("signupPanel").classList.toggle("active", !login);
+    document.getElementById("tabLogin").classList.toggle("active", login);
+    document.getElementById("tabSignup").classList.toggle("active", !login);
+    document.getElementById("loginMsg").textContent = "";
+  }
+
   async function doSignup(){
     if(!db){
       showLogin("Configure primeiro SUPABASE_URL e SUPABASE_KEY no arquivo.");
       return;
     }
-    var email = document.getElementById("loginEmail").value.trim();
-    var password = document.getElementById("loginPassword").value;
-    if(!email || !password){
-      showLogin("Informe e-mail e uma senha.");
+    var name = document.getElementById("signupName").value.trim();
+    var email = document.getElementById("signupEmail").value.trim();
+    var password = document.getElementById("signupPassword").value;
+    if(!name || !email || !password){
+      document.getElementById("loginMsg").textContent = "Informe nome, e-mail e senha.";
       return;
     }
     if(password.length < 6){
-      showLogin("A senha precisa ter pelo menos 6 caracteres.");
-      return;
-    }
-    var accessCode = document.getElementById("signupAccessCode").value;
-    if(!accessCode){
-      showLogin("Informe a senha especial de cadastro.");
+      document.getElementById("loginMsg").textContent = "A senha precisa ter pelo menos 6 caracteres.";
       return;
     }
 
     setLoginBusy(true);
-    document.getElementById("loginMsg").textContent = "Validando acesso...";
-    try{
-      var valid = await validateUniversalSignupCode(accessCode);
-      if(!valid){
-        setLoginBusy(false);
-        document.getElementById("loginMsg").textContent = "Senha especial de cadastro incorreta.";
-        return;
-      }
-    }catch(err){
-      setLoginBusy(false);
-      console.error(err);
-      document.getElementById("loginMsg").textContent = "Erro ao validar a senha de cadastro.";
-      return;
-    }
-
     document.getElementById("loginMsg").textContent = "Criando conta...";
     var result = await db.auth.signUp({
       email:email,
       password:password,
-      options:{
-        data:{nome:email.split("@")[0]}
-      }
+      options:{data:{nome:name}}
     });
     setLoginBusy(false);
+
     if(result.error){
       document.getElementById("loginMsg").textContent = "Erro: " + result.error.message;
       return;
     }
+
     if(result.data.session){
       document.getElementById("loginMsg").textContent = "Conta criada. Entrando...";
-    }else{
-      document.getElementById("loginMsg").textContent =
-        "Conta criada. Verifique seu e-mail para confirmar o cadastro.";
+      return;
     }
+
+    document.getElementById("loginMsg").textContent =
+      "Conta criada. Se aparecer uma confirmação de e-mail, desative 'Confirm email' no Supabase para usar o acesso sem verificação.";
   }
 
   async function doResetPassword(){
@@ -1373,6 +1385,8 @@ CONFIGURAÇÃO:
     showLogin("");
   }
 
+  document.getElementById("tabLogin").onclick = function(){ setAuthMode("login"); };
+  document.getElementById("tabSignup").onclick = function(){ setAuthMode("signup"); };
   document.getElementById("loginBtn").onclick = doLogin;
   document.getElementById("signupBtn").onclick = doSignup;
   document.getElementById("forgotBtn").onclick = doResetPassword;

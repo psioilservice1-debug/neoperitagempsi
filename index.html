@@ -596,7 +596,7 @@ CONFIGURAÇÃO:
       <small>Cilindros hidráulicos · escopo de serviço</small>
     </div>
     <div class="userbar" id="userbar">
-      <span class="access-badge" id="accessBadge">peritagem</span><span class="user-email" id="userEmail"></span>
+      <span class="access-badge" id="accessBadge">peritagem</span><span class="user-email" id="userNameDisplay"></span>
       <button class="logout-btn" id="logoutBtn">Sair</button>
     </div>
   </div>
@@ -616,29 +616,24 @@ CONFIGURAÇÃO:
 
     <div class="auth-panel active" id="loginPanel">
       <h2>Entrar</h2>
-      <p>Use seu e-mail e sua senha da conta.</p>
+      <p>Use seu nome e sua senha da conta.</p>
       <div class="login-field">
-        <label>E-mail</label>
-        <input type="email" id="loginEmail" autocomplete="email" placeholder="seuemail@empresa.com">
+        <label>Nome</label>
+        <input type="text" id="loginName" autocomplete="username" placeholder="Seu nome">
       </div>
       <div class="login-field">
         <label>Senha</label>
         <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Sua senha">
       </div>
       <button class="auth-submit" id="loginBtn" type="button">Entrar</button>
-      <button class="auth-secondary" id="forgotBtn" type="button">Esqueci minha senha</button>
     </div>
 
     <div class="auth-panel" id="signupPanel">
       <h2>Criar conta</h2>
-      <p>Cadastre seu nome, e-mail, sua senha e a senha especial de acesso.</p>
+      <p>Cadastre seu nome, sua senha e a senha especial de acesso.</p>
       <div class="login-field">
         <label>Nome</label>
         <input type="text" id="signupName" autocomplete="name" placeholder="Seu nome">
-      </div>
-      <div class="login-field">
-        <label>E-mail</label>
-        <input type="email" id="signupEmail" autocomplete="email" placeholder="seuemail@empresa.com">
       </div>
       <div class="login-field">
         <label>Senha</label>
@@ -671,10 +666,6 @@ CONFIGURAÇÃO:
           <option value="consulta">Consulta</option>
           <option value="admin">Administrador</option>
         </select>
-      </div>
-      <div class="full">
-        <label>Usuário (e-mail)</label>
-        <input id="adminUserEmail" type="text" readonly placeholder="O gerenciamento completo de e-mails fica no Authentication do Supabase">
       </div>
     </div>
     <div class="admin-actions">
@@ -1066,7 +1057,7 @@ CONFIGURAÇÃO:
     if(!result.data){
       var insert = await db.from("profiles").insert({
         user_id: currentUser.id,
-        nome: (currentUser.email || "").split("@")[0],
+        nome: (currentUser.user_metadata && currentUser.user_metadata.nome) || "Usuário",
         nivel: "peritagem",
         ativo: true
       }).select().single();
@@ -1247,11 +1238,10 @@ CONFIGURAÇÃO:
       return;
     }
 
-    document.getElementById("userEmail").textContent = user.email || "";
+    document.getElementById("userNameDisplay").textContent = currentProfile ? (currentProfile.nome || "") : "";
     var badge = document.getElementById("accessBadge");
     if(badge) badge.textContent = currentProfile ? currentProfile.nivel : "peritagem";
-    document.getElementById("adminUserEmail").value = user.email || "";
-    document.getElementById("adminUserName").value = currentProfile ? (currentProfile.nome || "") : "";
+        document.getElementById("adminUserName").value = currentProfile ? (currentProfile.nome || "") : "";
     document.getElementById("adminUserLevel").value = currentProfile ? currentProfile.nivel : "peritagem";
     applyAccessLevel();
     document.getElementById("homeScreen").style.display = "block";
@@ -1281,7 +1271,7 @@ CONFIGURAÇÃO:
     currentUser = null;
     document.getElementById("homeScreen").style.display = "none";
     document.getElementById("formScreen").style.display = "none";
-    document.getElementById("userEmail").textContent = "";
+    document.getElementById("userNameDisplay").textContent = "";
     document.getElementById("loginOverlay").classList.remove("hidden");
     document.getElementById("loginMsg").textContent = message || "";
   }
@@ -1289,7 +1279,22 @@ CONFIGURAÇÃO:
   function setLoginBusy(busy){
     document.getElementById("loginBtn").disabled = busy;
     document.getElementById("signupBtn").disabled = busy;
-    document.getElementById("forgotBtn").disabled = busy;
+  }
+
+  // O Supabase Auth usa e-mail como identificador técnico. Como a aplicação
+  // não terá e-mail do usuário, criamos internamente um identificador estável
+  // derivado do nome. Nenhum endereço de e-mail real é solicitado ou exibido.
+  function authEmailFromName(name){
+    var clean = String(name || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+    var slug = clean.replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "").slice(0, 50) || "usuario";
+    var hash = 0;
+    for(var i=0;i<clean.length;i++) hash = ((hash << 5) - hash + clean.charCodeAt(i)) | 0;
+    hash = Math.abs(hash).toString(36);
+    return "u." + slug + "." + hash + "@local.invalid";
   }
 
   async function doLogin(){
@@ -1297,15 +1302,18 @@ CONFIGURAÇÃO:
       showLogin("Configure primeiro SUPABASE_URL e SUPABASE_KEY no arquivo.");
       return;
     }
-    var email = document.getElementById("loginEmail").value.trim();
+    var name = document.getElementById("loginName").value.trim();
     var password = document.getElementById("loginPassword").value;
-    if(!email || !password){
-      showLogin("Informe e-mail e senha.");
+    if(!name || !password){
+      showLogin("Informe nome e senha.");
       return;
     }
     setLoginBusy(true);
     document.getElementById("loginMsg").textContent = "Entrando...";
-    var result = await db.auth.signInWithPassword({email:email,password:password});
+    var result = await db.auth.signInWithPassword({
+      email: authEmailFromName(name),
+      password: password
+    });
     setLoginBusy(false);
     if(result.error){
       document.getElementById("loginMsg").textContent = "Erro: " + result.error.message;
@@ -1329,11 +1337,10 @@ CONFIGURAÇÃO:
       return;
     }
     var name = document.getElementById("signupName").value.trim();
-    var email = document.getElementById("signupEmail").value.trim();
     var password = document.getElementById("signupPassword").value;
     var accessCode = document.getElementById("signupAccessCode").value;
-    if(!name || !email || !password || !accessCode){
-      document.getElementById("loginMsg").textContent = "Informe nome, e-mail, senha e a senha especial de acesso.";
+    if(!name || !password || !accessCode){
+      document.getElementById("loginMsg").textContent = "Informe nome, senha e a senha especial de acesso.";
       return;
     }
     if(password.length < 6){
@@ -1356,13 +1363,12 @@ CONFIGURAÇÃO:
     }
 
     document.getElementById("loginMsg").textContent = "Criando conta...";
-    // IMPORTANTE: o cadastro não chama resend, OTP, resetPassword ou qualquer
-    // outro endpoint de envio de e-mail. O signUp abaixo é usado apenas para
-    // criar a credencial. Para que o Supabase não envie confirmação por e-mail,
-    // deixe Authentication > Providers > Email > Confirm email DESATIVADO.
+    // Não existe campo de e-mail para o usuário. O valor abaixo é apenas um
+    // identificador técnico interno exigido pelo Supabase Auth e usa o domínio
+    // reservado .invalid, portanto não representa um endereço real.
     var result = await db.auth.signUp({
-      email:email,
-      password:password,
+      email: authEmailFromName(name),
+      password: password,
       options:{
         data:{nome:name}
       }
@@ -1380,27 +1386,7 @@ CONFIGURAÇÃO:
     }
 
     document.getElementById("loginMsg").textContent =
-      "A conta foi criada, mas o Supabase não retornou uma sessão. Desative 'Confirm email' em Authentication > Providers > Email no Supabase para que o cadastro não dependa de e-mail.";
-  }
-
-  async function doResetPassword(){
-    if(!db){
-      showLogin("Configure primeiro SUPABASE_URL e SUPABASE_KEY no arquivo.");
-      return;
-    }
-    var email = document.getElementById("loginEmail").value.trim();
-    if(!email){
-      showLogin("Digite seu e-mail antes de clicar em 'Esqueci minha senha'.");
-      return;
-    }
-    setLoginBusy(true);
-    var result = await db.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + window.location.pathname
-    });
-    setLoginBusy(false);
-    document.getElementById("loginMsg").textContent = result.error
-      ? "Erro: " + result.error.message
-      : "Se o e-mail existir, o link de redefinição foi enviado.";
+      "A conta foi criada, mas o Supabase não iniciou a sessão. No Supabase, deixe 'Confirm email' DESATIVADO em Authentication > Providers > Email.";
   }
 
   async function doLogout(){
@@ -1413,7 +1399,6 @@ CONFIGURAÇÃO:
   document.getElementById("tabSignup").onclick = function(){ setAuthMode("signup"); };
   document.getElementById("loginBtn").onclick = doLogin;
   document.getElementById("signupBtn").onclick = doSignup;
-  document.getElementById("forgotBtn").onclick = doResetPassword;
   document.getElementById("logoutBtn").onclick = doLogout;
 
   function uid(){ return "f_" + Date.now() + "_" + Math.random().toString(36).slice(2,8); }

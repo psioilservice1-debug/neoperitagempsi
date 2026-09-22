@@ -631,7 +631,7 @@ CONFIGURAÇÃO:
 
     <div class="auth-panel" id="signupPanel">
       <h2>Criar conta</h2>
-      <p>Cadastre seu nome, e-mail e uma senha. Não é necessária senha universal.</p>
+      <p>Cadastre seu nome, e-mail, sua senha e a senha especial de acesso.</p>
       <div class="login-field">
         <label>Nome</label>
         <input type="text" id="signupName" autocomplete="name" placeholder="Seu nome">
@@ -643,6 +643,10 @@ CONFIGURAÇÃO:
       <div class="login-field">
         <label>Senha</label>
         <input type="password" id="signupPassword" autocomplete="new-password" placeholder="Mínimo de 6 caracteres">
+      </div>
+      <div class="login-field">
+        <label>Senha especial de acesso</label>
+        <input type="password" id="signupAccessCode" autocomplete="off" placeholder="Senha especial para autorizar o cadastro">
       </div>
       <button class="auth-submit" id="signupBtn" type="button">Criar conta</button>
     </div>
@@ -1327,8 +1331,9 @@ CONFIGURAÇÃO:
     var name = document.getElementById("signupName").value.trim();
     var email = document.getElementById("signupEmail").value.trim();
     var password = document.getElementById("signupPassword").value;
-    if(!name || !email || !password){
-      document.getElementById("loginMsg").textContent = "Informe nome, e-mail e senha.";
+    var accessCode = document.getElementById("signupAccessCode").value;
+    if(!name || !email || !password || !accessCode){
+      document.getElementById("loginMsg").textContent = "Informe nome, e-mail, senha e a senha especial de acesso.";
       return;
     }
     if(password.length < 6){
@@ -1337,6 +1342,19 @@ CONFIGURAÇÃO:
     }
 
     setLoginBusy(true);
+    document.getElementById("loginMsg").textContent = "Validando senha especial...";
+    var accessCheck = await db.rpc("validar_senha_cadastro", {p_senha:accessCode});
+    if(accessCheck.error){
+      setLoginBusy(false);
+      document.getElementById("loginMsg").textContent = "Erro ao validar a senha especial: " + accessCheck.error.message;
+      return;
+    }
+    if(!accessCheck.data){
+      setLoginBusy(false);
+      document.getElementById("loginMsg").textContent = "Senha especial de acesso incorreta.";
+      return;
+    }
+
     document.getElementById("loginMsg").textContent = "Criando conta...";
     var result = await db.auth.signUp({
       email:email,

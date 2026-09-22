@@ -1363,30 +1363,48 @@ CONFIGURAÇÃO:
     }
 
     document.getElementById("loginMsg").textContent = "Criando conta...";
-    // Não existe campo de e-mail para o usuário. O valor abaixo é apenas um
-    // identificador técnico interno exigido pelo Supabase Auth e usa o domínio
-    // reservado .invalid, portanto não representa um endereço real.
-    var result = await db.auth.signUp({
-      email: authEmailFromName(name),
-      password: password,
-      options:{
-        data:{nome:name}
+
+    // IMPORTANTE: não usamos auth.signUp() aqui.
+    // signUp() passa pelo endpoint de cadastro do Auth, que possui limite
+    // de e-mails. A criação é feita no servidor pela Edge Function, usando
+    // auth.admin.createUser(), sem enviar e-mail de confirmação.
+    var result = await db.functions.invoke("criar-conta", {
+      body:{
+        nome:name,
+        password:password,
+        senhaEspecial:accessCode
       }
     });
     setLoginBusy(false);
 
     if(result.error){
-      document.getElementById("loginMsg").textContent = "Erro: " + result.error.message;
+      console.error("[CADASTRO]", result.error);
+      document.getElementById("loginMsg").textContent =
+        "Erro ao criar conta: " + (result.error.message || "falha na função criar-conta");
       return;
     }
 
-    if(result.data.session){
-      document.getElementById("loginMsg").textContent = "Conta criada. Entrando...";
+    var data = result.data || {};
+    if(!data.ok){
+      document.getElementById("loginMsg").textContent =
+        "Erro: " + (data.error || "não foi possível criar a conta.");
       return;
     }
 
-    document.getElementById("loginMsg").textContent =
-      "A conta foi criada, mas o Supabase não iniciou a sessão. No Supabase, deixe 'Confirm email' DESATIVADO em Authentication > Providers > Email.";
+    // Faz login automaticamente usando o identificador técnico interno.
+    document.getElementById("loginMsg").textContent = "Conta criada. Entrando...";
+    var loginResult = await db.auth.signInWithPassword({
+      email: data.email,
+      password: password
+    });
+
+    if(loginResult.error){
+      document.getElementById("loginMsg").textContent =
+        "Conta criada, mas não foi possível entrar automaticamente: " + loginResult.error.message;
+      return;
+    }
+
+    document.getElementById("loginMsg").textContent = "";
   }
 
   async function doLogout(){

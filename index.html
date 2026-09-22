@@ -1356,10 +1356,16 @@ CONFIGURAÇÃO:
     }
 
     document.getElementById("loginMsg").textContent = "Criando conta...";
+    // IMPORTANTE: o cadastro não chama resend, OTP, resetPassword ou qualquer
+    // outro endpoint de envio de e-mail. O signUp abaixo é usado apenas para
+    // criar a credencial. Para que o Supabase não envie confirmação por e-mail,
+    // deixe Authentication > Providers > Email > Confirm email DESATIVADO.
     var result = await db.auth.signUp({
       email:email,
       password:password,
-      options:{data:{nome:name}}
+      options:{
+        data:{nome:name}
+      }
     });
     setLoginBusy(false);
 
@@ -1374,7 +1380,7 @@ CONFIGURAÇÃO:
     }
 
     document.getElementById("loginMsg").textContent =
-      "Conta criada. Se aparecer uma confirmação de e-mail, desative 'Confirm email' no Supabase para usar o acesso sem verificação.";
+      "A conta foi criada, mas o Supabase não retornou uma sessão. Desative 'Confirm email' em Authentication > Providers > Email no Supabase para que o cadastro não dependa de e-mail.";
   }
 
   async function doResetPassword(){

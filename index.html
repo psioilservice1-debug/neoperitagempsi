@@ -154,6 +154,14 @@
   }
 
   .card-list{display:flex;flex-direction:column;gap:10px;}
+  .ficha-search-panel{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;}
+  .ficha-search-row{display:grid;grid-template-columns:1fr;gap:8px;}
+  .ficha-search-row input,.ficha-search-row select{width:100%;box-sizing:border-box;}
+  .ficha-search-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;}
+  .ficha-owner{font-size:11.5px;color:var(--ink-soft);margin-top:7px;display:flex;align-items:center;gap:5px;}
+  .ficha-owner strong{color:var(--ink);}
+  .ficha-readonly{font-size:11px;color:var(--ink-soft);margin-top:7px;}
+  @media (min-width:560px){.ficha-search-row{grid-template-columns:2fr 1fr 1fr 1fr;}.ficha-search-filters{grid-template-columns:1fr 1fr 1fr 1fr;}}
   .ficha-card{
     background:var(--paper);
     border:1px solid var(--line);
@@ -477,6 +485,23 @@
     font-size:14px;
     font-family:inherit;
   }
+  .remember-login{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin:2px 0 12px;
+    color:var(--ink-soft);
+    font-size:12.5px;
+    cursor:pointer;
+    user-select:none;
+  }
+  .remember-login input{
+    width:16px;
+    height:16px;
+    margin:0;
+    accent-color:var(--steel);
+    cursor:pointer;
+  }
   .login-actions{display:flex;gap:9px;margin-top:13px;}
   .login-actions button{
     flex:1;
@@ -625,6 +650,10 @@ CONFIGURAÇÃO:
         <label>Senha</label>
         <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Sua senha">
       </div>
+      <label class="remember-login">
+        <input type="checkbox" id="rememberLogin">
+        <span>Manter-me conectado neste dispositivo</span>
+      </label>
       <button class="auth-submit" id="loginBtn" type="button">Entrar</button>
     </div>
 
@@ -696,7 +725,36 @@ CONFIGURAÇÃO:
     </div>
   </div>
 
-  <button class="new-btn" id="btnNova">+ Nova ficha de peritagem</button>
+  <button class="new-btn" id="btnNova" data-requires-edit>+ Nova ficha de peritagem</button>
+
+  <div class="ficha-search-panel">
+    <div class="ficha-search-row">
+      <input id="fichaSearch" type="search" placeholder="Buscar por nome, empresa, equipamento ou OS...">
+      <select id="fichaOwnerFilter">
+        <option value="todas">Todos os autores</option>
+        <option value="minhas">Feitas por mim</option>
+        <option value="terceiros">Feitas por terceiros</option>
+      </select>
+      <select id="fichaDateFilter">
+        <option value="todas">Todas as datas</option>
+        <option value="hoje">Hoje</option>
+        <option value="7">Últimos 7 dias</option>
+        <option value="30">Últimos 30 dias</option>
+        <option value="90">Últimos 90 dias</option>
+      </select>
+      <select id="fichaModelFilter">
+        <option value="todos">Todos os modelos</option>
+        <option value="padrao">Padrão</option>
+        <option value="caraiba">Caraíba</option>
+      </select>
+    </div>
+    <div class="ficha-search-filters">
+      <input id="fichaDateFrom" type="date" title="Data inicial">
+      <input id="fichaDateTo" type="date" title="Data final">
+      <button class="chip-btn" id="fichaClearFilters" type="button">Limpar filtros</button>
+      <div id="fichaResultCount" class="ficha-readonly"></div>
+    </div>
+  </div>
 
   <div class="section-label" id="listLabel">Fichas salvas</div>
   <div class="empty" id="emptyState">
@@ -944,6 +1002,22 @@ CONFIGURAÇÃO:
   var dbReady = false;
   var isAdmin = false;
   var syncTimer = null;
+  var REMEMBER_LOGIN_KEY = "peritagem_manter_logado";
+
+  function shouldRememberLogin(){
+    try{
+      return localStorage.getItem(REMEMBER_LOGIN_KEY) === "1";
+    }catch(e){
+      return false;
+    }
+  }
+
+  function setRememberLogin(value){
+    try{
+      if(value) localStorage.setItem(REMEMBER_LOGIN_KEY, "1");
+      else localStorage.removeItem(REMEMBER_LOGIN_KEY);
+    }catch(e){}
+  }
 
   function userStorageKey(){
     return currentUser ? (STORAGE_KEY + "_" + currentUser.id) : STORAGE_KEY;
@@ -959,7 +1033,6 @@ CONFIGURAÇÃO:
   function saveFichas(list){
     try{
       localStorage.setItem(userStorageKey(), JSON.stringify(list));
-      if(dbReady) scheduleSync();
       return true;
     }catch(e){
       console.error("[DB] erro ao salvar cache local:", e);
@@ -978,9 +1051,10 @@ CONFIGURAÇÃO:
 
   async function syncFichaToDatabase(f){
     if(!db || !currentUser) return;
+    var ownerId = f._ownerId || f.createdBy || currentUser.id;
     var payload = {
       id: String(f.id),
-      user_id: currentUser.id,
+      user_id: ownerId,
       modelo: f.modelo || "padrao",
       dados: f,
       saved_at: Number(f.savedAt || Date.now()),
@@ -997,7 +1071,7 @@ CONFIGURAÇÃO:
     var rows = list.map(function(f){
       return {
         id: String(f.id),
-        user_id: currentUser.id,
+        user_id: f._ownerId || f.createdBy || currentUser.id,
         modelo: f.modelo || "padrao",
         dados: f,
         saved_at: Number(f.savedAt || Date.now()),
@@ -1008,12 +1082,26 @@ CONFIGURAÇÃO:
     if(result.error) throw result.error;
   }
 
+  var profileDirectory = {};
+
+  async function loadProfilesDirectory(){
+    if(!db || !currentUser) return;
+    var result = await db.from("profiles")
+      .select("user_id,nome,nivel,ativo");
+    if(result.error) throw result.error;
+    profileDirectory = {};
+    (result.data || []).forEach(function(p){
+      profileDirectory[String(p.user_id)] = p;
+    });
+  }
+
   async function loadFichasFromDatabase(){
     if(!db || !currentUser) return;
+    await loadProfilesDirectory();
+
     var result = await db
       .from("fichas")
-      .select("id,modelo,dados,saved_at")
-      .eq("user_id", currentUser.id)
+      .select("id,user_id,modelo,dados,saved_at")
       .order("saved_at", {ascending:false});
 
     if(result.error) throw result.error;
@@ -1023,10 +1111,13 @@ CONFIGURAÇÃO:
       f.id = String(row.id);
       f.modelo = f.modelo || row.modelo || "padrao";
       f.savedAt = f.savedAt || row.saved_at || Date.now();
+      f._ownerId = String(row.user_id);
+      var owner = profileDirectory[String(row.user_id)];
+      f._ownerName = (owner && owner.nome) || f.createdByName || (String(row.user_id) === String(currentUser.id) ? (currentProfile && currentProfile.nome) || "Você" : "Usuário");
+      f._ownerLevel = owner ? owner.nivel : "";
       return f;
     });
 
-    // Migração do localStorage antigo somente se esta conta ainda não tiver dados.
     var currentCache = loadFichas();
     if(cloudList.length === 0 && currentCache.length > 0){
       await syncAllFichasToDatabase();
@@ -1040,11 +1131,9 @@ CONFIGURAÇÃO:
     if(!db || !currentUser) return;
     var result = await db.from("fichas")
       .delete()
-      .eq("id", String(id))
-      .eq("user_id", currentUser.id);
+      .eq("id", String(id));
     if(result.error) throw result.error;
   }
-
 
   async function loadMyProfile(){
     if(!db || !currentUser) return null;
@@ -1071,22 +1160,31 @@ CONFIGURAÇÃO:
     return currentProfile;
   }
 
+  function canEditFicha(f){
+    if(!currentProfile || currentProfile.ativo === false) return false;
+    if(currentProfile.nivel === "admin") return true;
+    return currentProfile.nivel === "peritagem" &&
+      String(f && (f._ownerId || f.createdBy) || "") === String(currentUser && currentUser.id || "");
+  }
+
+  function canDeleteFicha(f){
+    return canEditFicha(f);
+  }
+
   function applyAccessLevel(){
     var adminPanel = document.getElementById("adminPanel");
-    if(adminPanel){
-      adminPanel.classList.toggle("show", isAdmin);
-    }
+    if(adminPanel) adminPanel.classList.toggle("show", isAdmin);
 
-    // Usuário consulta não deve criar/editar fichas.
-    var canEdit = !currentProfile || currentProfile.nivel !== "consulta";
+    var canCreate = !!currentProfile &&
+      currentProfile.ativo !== false &&
+      (currentProfile.nivel === "peritagem" || currentProfile.nivel === "admin");
+
     document.querySelectorAll("[data-requires-edit]").forEach(function(el){
-      el.style.display = canEdit ? "" : "none";
+      el.style.display = canCreate ? "" : "none";
     });
 
     var badge = document.getElementById("accessBadge");
-    if(badge && currentProfile){
-      badge.textContent = currentProfile.nivel;
-    }
+    if(badge && currentProfile) badge.textContent = currentProfile.nivel;
   }
 
 
@@ -1269,6 +1367,8 @@ CONFIGURAÇÃO:
   function showLogin(message){
     dbReady = false;
     currentUser = null;
+    var remember = document.getElementById("rememberLogin");
+    if(remember) remember.checked = shouldRememberLogin();
     document.getElementById("homeScreen").style.display = "none";
     document.getElementById("formScreen").style.display = "none";
     document.getElementById("userNameDisplay").textContent = "";
@@ -1304,10 +1404,16 @@ CONFIGURAÇÃO:
     }
     var name = document.getElementById("loginName").value.trim();
     var password = document.getElementById("loginPassword").value;
+    var remember = document.getElementById("rememberLogin").checked;
     if(!name || !password){
       showLogin("Informe nome e senha.");
       return;
     }
+
+    // A senha nunca é salva. Guardamos apenas a preferência
+    // de manter a sessão do Supabase neste dispositivo.
+    setRememberLogin(remember);
+
     setLoginBusy(true);
     document.getElementById("loginMsg").textContent = "Entrando...";
     var result = await db.auth.signInWithPassword({
@@ -1409,6 +1515,9 @@ CONFIGURAÇÃO:
 
   async function doLogout(){
     if(!db) return;
+    setRememberLogin(false);
+    var checkbox = document.getElementById("rememberLogin");
+    if(checkbox) checkbox.checked = false;
     await db.auth.signOut();
     showLogin("");
   }
@@ -1479,14 +1588,70 @@ CONFIGURAÇÃO:
   var fichaListEl = document.getElementById("fichaList");
   var emptyStateEl = document.getElementById("emptyState");
 
+  function normalizeSearch(v){
+    return String(v || "").normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLowerCase().trim();
+  }
+
+  function fichaMatchesFilters(f){
+    var q = normalizeSearch(document.getElementById("fichaSearch").value);
+    var ownerFilter = document.getElementById("fichaOwnerFilter").value;
+    var dateFilter = document.getElementById("fichaDateFilter").value;
+    var modelFilter = document.getElementById("fichaModelFilter").value;
+    var from = document.getElementById("fichaDateFrom").value;
+    var to = document.getElementById("fichaDateTo").value;
+
+    var ownerId = String(f._ownerId || f.createdBy || "");
+    var isMine = ownerId === String(currentUser && currentUser.id || "");
+
+    if(ownerFilter === "minhas" && !isMine) return false;
+    if(ownerFilter === "terceiros" && isMine) return false;
+    if(modelFilter !== "todos" && (f.modelo || "padrao") !== modelFilter) return false;
+
+    var hay = normalizeSearch([
+      f.cliente, f.nome, f.nomeEmpresa, f.empresa, f.equipamento, f.os,
+      f.notaFiscal, f.pn, f._ownerName, f.createdByName
+    ].join(" "));
+    if(q && hay.indexOf(q) === -1) return false;
+
+    var ts = Number(f.savedAt || 0);
+    var d = ts ? new Date(ts) : null;
+    if(dateFilter !== "todas" && d){
+      var now = new Date();
+      var start = new Date(now.getFullYear(),now.getMonth(),now.getDate());
+      if(dateFilter === "hoje" && d < start) return false;
+      if(/^[0-9]+$/.test(dateFilter)){
+        var days = Number(dateFilter);
+        var cutoff = new Date(start.getTime() - (days-1)*86400000);
+        if(d < cutoff) return false;
+      }
+    }
+    if(from){
+      var fromDate = new Date(from + "T00:00:00");
+      if(!d || d < fromDate) return false;
+    }
+    if(to){
+      var toDate = new Date(to + "T23:59:59.999");
+      if(!d || d > toDate) return false;
+    }
+    return true;
+  }
+
   function renderHome(){
     applyAccessLevel();
-    var list = loadFichas();
+    var list = loadFichas().filter(fichaMatchesFilters);
     list.sort(function(a,b){ return (b.savedAt||0) - (a.savedAt||0); });
+
+    var all = loadFichas();
+    var count = document.getElementById("fichaResultCount");
+    if(count) count.textContent = list.length + " de " + all.length + " ficha(s)";
+
     fichaListEl.innerHTML = "";
     if(list.length === 0){
       emptyStateEl.classList.remove("hidden");
       fichaListEl.classList.add("hidden");
+      emptyStateEl.innerHTML = all.length
+        ? "Nenhuma ficha corresponde aos filtros."
+        : 'Nenhuma ficha salva ainda.<br>Toque em "Nova ficha" para começar.';
       return;
     }
     emptyStateEl.classList.add("hidden");
@@ -1500,29 +1665,36 @@ CONFIGURAÇÃO:
       top.className = "ficha-card-top";
       var title = document.createElement("div");
       title.className = "ficha-title";
-      title.textContent = f.equipamento || "(sem nome do equipamento)";
+      title.textContent = f.equipamento || f.nome || "(sem nome do equipamento)";
       var tag = document.createElement("div");
       tag.className = "ficha-tag " + (f.modelo === "caraiba" ? "tag-caraiba" : "tag-padrao");
       tag.textContent = f.modelo === "caraiba" ? "CARAÍBA" : "PADRÃO";
-      top.appendChild(title);
-      top.appendChild(tag);
-      card.appendChild(top);
+      top.appendChild(title); top.appendChild(tag); card.appendChild(top);
 
       var meta = document.createElement("div");
       meta.className = "ficha-meta";
       var metaParts = [];
-      if(f.cliente) metaParts.push("Cliente: " + f.cliente);
+      if(f.cliente) metaParts.push("Empresa/cliente: " + f.cliente);
       if(f.pn) metaParts.push("PN: " + f.pn);
       if(f.os) metaParts.push("OS: " + f.os);
+      if(f.savedAt) metaParts.push("Salva em: " + new Date(f.savedAt).toLocaleDateString("pt-BR"));
       meta.textContent = metaParts.join(" · ") || "Sem dados preenchidos ainda";
       card.appendChild(meta);
+
+      var owner = document.createElement("div");
+      owner.className = "ficha-owner";
+      owner.innerHTML = "👤 Criada por <strong></strong>";
+      owner.querySelector("strong").textContent =
+        String(f._ownerId || f.createdBy || "") === String(currentUser && currentUser.id || "")
+          ? "você" : (f._ownerName || "outro usuário");
+      card.appendChild(owner);
 
       var actions = document.createElement("div");
       actions.className = "ficha-actions";
 
       var btnAbrir = document.createElement("button");
       btnAbrir.className = "chip-btn";
-      btnAbrir.textContent = "Abrir / editar";
+      btnAbrir.textContent = canEditFicha(f) ? "Abrir / editar" : "Visualizar";
       btnAbrir.onclick = function(){ openFicha(f.id); };
 
       var btnShare = document.createElement("button");
@@ -1530,37 +1702,61 @@ CONFIGURAÇÃO:
       btnShare.textContent = "Exportar / enviar";
       btnShare.onclick = function(){ openShare(f.id); };
 
-      var btnDel = document.createElement("button");
-      btnDel.className = "chip-btn danger";
-      btnDel.textContent = "Excluir";
-      btnDel.onclick = function(){ deleteFicha(f.id); };
-
       actions.appendChild(btnAbrir);
       actions.appendChild(btnShare);
-      actions.appendChild(btnDel);
-      card.appendChild(actions);
 
+      if(canDeleteFicha(f)){
+        var btnDel = document.createElement("button");
+        btnDel.className = "chip-btn danger";
+        btnDel.textContent = "Excluir";
+        btnDel.onclick = function(){ deleteFicha(f.id); };
+        actions.appendChild(btnDel);
+      }
+
+      card.appendChild(actions);
       fichaListEl.appendChild(card);
     });
   }
 
   function deleteFicha(id){
-    if(currentProfile && currentProfile.nivel === "consulta"){
-      toast("Usuário de consulta não pode excluir fichas.");
+    var list = loadFichas();
+    var f = list.find(function(x){ return x.id === id; });
+    if(!f || !canDeleteFicha(f)){
+      toast("Você não tem permissão para excluir esta ficha.");
       return;
     }
     if(!confirm("Excluir esta ficha? Essa ação não pode ser desfeita.")) return;
-    var list = loadFichas().filter(function(f){ return f.id !== id; });
-    saveFichas(list);
+
+    var remaining = list.filter(function(x){ return x.id !== id; });
+    localStorage.setItem(userStorageKey(), JSON.stringify(remaining));
+
     if(dbReady){
-      deleteFichaFromDatabase(id).catch(function(err){
+      deleteFichaFromDatabase(id).then(function(){
+        renderHome(); toast("Ficha excluída.");
+      }).catch(function(err){
         console.error("[DB] erro ao excluir:", err);
-        toast("Ficha removida localmente, mas houve erro na nuvem.");
+        toast("Não foi possível excluir na nuvem.");
+        loadFichasFromDatabase().then(renderHome).catch(function(){});
       });
+    }else{
+      renderHome(); toast("Ficha excluída.");
     }
-    renderHome();
-    toast("Ficha excluída.");
   }
+
+  // ---------- filtros ----------
+  ["fichaSearch","fichaOwnerFilter","fichaDateFilter","fichaModelFilter","fichaDateFrom","fichaDateTo"].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.addEventListener(id === "fichaSearch" ? "input" : "change", renderHome);
+  });
+  document.getElementById("fichaClearFilters").onclick = function(){
+    document.getElementById("fichaSearch").value = "";
+    document.getElementById("fichaOwnerFilter").value = "todas";
+    document.getElementById("fichaDateFilter").value = "todas";
+    document.getElementById("fichaModelFilter").value = "todos";
+    document.getElementById("fichaDateFrom").value = "";
+    document.getElementById("fichaDateTo").value = "";
+    renderHome();
+  };
 
   // ---------- modelo / preset modal flow ----------
   var modeloOverlay = document.getElementById("modeloOverlay");
@@ -1600,10 +1796,19 @@ CONFIGURAÇÃO:
   };
 
   function startNewFicha(modelo, presetKey){
+    if(!currentProfile || (currentProfile.nivel !== "peritagem" && currentProfile.nivel !== "admin")){
+      toast("Seu nível de acesso não pode criar fichas.");
+      return;
+    }
     var f = blankFicha(modelo);
+    f._ownerId = currentUser.id;
+    f._ownerName = currentProfile.nome || "Usuário";
+    f.createdBy = currentUser.id;
+    f.createdByName = currentProfile.nome || "Usuário";
     if(presetKey) applyPreset(f, presetKey);
     state.editingId = null;
     renderForm(f);
+    setFormReadOnly(false);
     showForm();
   }
 
@@ -1613,6 +1818,7 @@ CONFIGURAÇÃO:
     if(!f) return;
     state.editingId = id;
     renderForm(f);
+    setFormReadOnly(!canEditFicha(f));
     showForm();
   }
 
@@ -1658,6 +1864,18 @@ CONFIGURAÇÃO:
     renderSimNaoGroup("preAnaliseWrap", PRE_ANALISE_ITEMS, f.preAnalise);
     renderSimNaoGroup("etapasWrap", ETAPAS_ITEMS, f.etapas);
     renderItemsTable(f.items);
+  }
+
+  function setFormReadOnly(readOnly){
+    document.querySelectorAll("#formScreen input, #formScreen textarea, #formScreen select").forEach(function(el){
+      el.disabled = !!readOnly;
+    });
+    document.querySelectorAll("#formScreen button").forEach(function(el){
+      if(el.id === "btnVoltarForm") return;
+      el.disabled = !!readOnly;
+    });
+    var save = document.getElementById("btnSalvar");
+    if(save) save.style.display = readOnly ? "none" : "";
   }
 
   function renderSimNaoGroup(containerId, defs, dataObj){
@@ -1762,25 +1980,41 @@ CONFIGURAÇÃO:
 
   document.getElementById("btnSalvar").onclick = function(){
     var f = collectFormIntoFicha();
+    if(!canEditFicha(f)){
+      toast("Você não tem permissão para editar esta ficha.");
+      return;
+    }
+    if(!f._ownerId){
+      f._ownerId = currentUser.id;
+      f.createdBy = currentUser.id;
+      f._ownerName = currentProfile.nome || "Usuário";
+      f.createdByName = currentProfile.nome || "Usuário";
+    }
     f.savedAt = Date.now();
+
     var list = loadFichas();
     var idx = list.findIndex(function(x){ return x.id === f.id; });
     if(idx >= 0) list[idx] = f; else list.push(f);
-    var ok = saveFichas(list);
-    if(ok){
-      if(dbReady){
-        syncFichaToDatabase(f).then(function(){
-          toast("Ficha salva na nuvem.");
-        }).catch(function(err){
-          console.error("[DB] erro ao salvar ficha:", err);
-          toast("Salva no aparelho, mas houve erro na nuvem.");
-        });
-      }else{
-        toast("Ficha salva localmente.");
-      }
+
+    try{
+      localStorage.setItem(userStorageKey(), JSON.stringify(list));
+    }catch(e){
+      toast("Não foi possível salvar localmente.");
+      return;
+    }
+
+    if(dbReady){
+      syncFichaToDatabase(f).then(function(){
+        toast("Ficha salva na nuvem.");
+        showHome();
+      }).catch(function(err){
+        console.error("[DB] erro ao salvar ficha:", err);
+        toast("Não foi possível salvar na nuvem: " + (err.message || "erro de permissão"));
+        loadFichasFromDatabase().then(renderHome).catch(function(){});
+      });
+    }else{
+      toast("Ficha salva localmente.");
       showHome();
-    } else {
-      toast("Não foi possível salvar. Tente novamente.");
     }
   };
 
@@ -2118,7 +2352,14 @@ CONFIGURAÇÃO:
     try{
       var sessionResult = await db.auth.getSession();
       if(sessionResult.data && sessionResult.data.session){
-        await initializeAuthenticatedApp(sessionResult.data.session.user);
+        if(shouldRememberLogin()){
+          // Sessão lembrada: entra direto sem mostrar a tela de login.
+          await initializeAuthenticatedApp(sessionResult.data.session.user);
+        }else{
+          // Há uma sessão antiga, mas o usuário não pediu para permanecer conectado.
+          await db.auth.signOut();
+          showLogin("");
+        }
       }else{
         showLogin("");
       }
@@ -2126,6 +2367,8 @@ CONFIGURAÇÃO:
       db.auth.onAuthStateChange(function(event, session){
         if(session && session.user){
           // Evita depender do callback para operações demoradas.
+          // O INITIAL_SESSION já foi tratado acima.
+          if(event === "INITIAL_SESSION") return;
           initializeAuthenticatedApp(session.user).catch(function(err){
             console.error("[AUTH] inicialização:", err);
           });
